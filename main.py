@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from routes.categorias import router as categorias_router
 
 app = FastAPI(
     title="Ordena24 API",
@@ -18,6 +19,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(categorias_router)
+
 
 @app.get("/")
 def home():
