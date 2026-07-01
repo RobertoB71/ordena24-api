@@ -1,0 +1,18 @@
+services:
+  ordena24_api_db:
+    image: bitnamilegacy/postgresql:14.9.0
+    container_name: ordena24_api_db
+    restart: "no"
+    ports:
+      - "5433:5432"
+    environment:
+      - TZ=UTC
+      - POSTGRESQL_DATABASE=ordena24_api_db
+      - POSTGRESQL_USERNAME=ordena24_user
+      - POSTGRESQL_PASSWORD=ordena24_pass
+    volumes:
+      - ordena24_api_db_data:/bitnami/postgresql
+
+volumes:
+  ordena24_api_db_data:
+    driver: local
