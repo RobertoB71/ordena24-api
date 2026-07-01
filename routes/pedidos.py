@@ -1,4 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+
+from database.database import get_db
+from models.models import Pedido, DetallePedido, Producto
 from schemas.schemas import PedidoCreate, PedidoResponse, PedidoUpdateEstado
 
 router = APIRouter(
@@ -6,70 +10,113 @@ router = APIRouter(
     tags=["Pedidos"]
 )
 
-pedidos = [
-    {
-        "id": 1,
-        "cliente_nombre": "Juan Pérez",
-        "cliente_email": "juan@example.com",
-        "direccion_entrega": "Ciudad de Panamá, Vía España",
-        "telefono": "6000-0000",
-        "total": 9.25,
-        "estado": "Pendiente",
-        "detalle": [
-            {
-                "producto_id": 1,
-                "nombre_producto": "Hamburguesa Clásica",
-                "cantidad": 1,
-                "precio_unitario": 6.50,
-                "subtotal": 6.50
-            },
-            {
-                "producto_id": 2,
-                "nombre_producto": "Papas Fritas",
-                "cantidad": 1,
-                "precio_unitario": 2.75,
-                "subtotal": 2.75
-            }
-        ]
-    }
-]
 
+def construir_respuesta_pedido(pedido: Pedido, db: Session):
+    detalle = db.query(DetallePedido).filter(
+        DetallePedido.pedido_id == pedido.id
+    ).all()
 
-@router.get("/", response_model=list[PedidoResponse])
-def listar_pedidos():
-    return pedidos
+    detalle_respuesta = []
 
+    for item in detalle:
+        producto = db.query(Producto).filter(
+            Producto.id == item.producto_id
+        ).first()
 
-@router.get("/{pedido_id}", response_model=PedidoResponse)
-def obtener_pedido(pedido_id: int):
-    for pedido in pedidos:
-        if pedido["id"] == pedido_id:
-            return pedido
+        detalle_respuesta.append({
+            "producto_id": item.producto_id,
+            "nombre_producto": producto.nombre if producto else "Producto no encontrado",
+            "cantidad": item.cantidad,
+            "precio_unitario": float(item.precio_unitario),
+            "subtotal": float(item.subtotal)
+        })
 
-    raise HTTPException(status_code=404, detail="Pedido no encontrado")
-
-
-@router.post("/", response_model=PedidoResponse, status_code=201)
-def crear_pedido(pedido: PedidoCreate):
-    nuevo_pedido = {
-        "id": len(pedidos) + 1,
+    return {
+        "id": pedido.id,
         "cliente_nombre": pedido.cliente_nombre,
         "cliente_email": pedido.cliente_email,
         "direccion_entrega": pedido.direccion_entrega,
         "telefono": pedido.telefono,
-        "total": pedido.total,
+        "total": float(pedido.total),
         "estado": pedido.estado,
-        "detalle": [item.model_dump() for item in pedido.detalle]
+        "detalle": detalle_respuesta
     }
 
-    pedidos.append(nuevo_pedido)
 
-    return nuevo_pedido
+@router.get("/", response_model=list[PedidoResponse])
+def listar_pedidos(db: Session = Depends(get_db)):
+    pedidos = db.query(Pedido).all()
+
+    return [
+        construir_respuesta_pedido(pedido, db)
+        for pedido in pedidos
+    ]
+
+
+@router.get("/{pedido_id}", response_model=PedidoResponse)
+def obtener_pedido(pedido_id: int, db: Session = Depends(get_db)):
+    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
+
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+    return construir_respuesta_pedido(pedido, db)
+
+
+@router.post("/", response_model=PedidoResponse, status_code=201)
+def crear_pedido(pedido: PedidoCreate, db: Session = Depends(get_db)):
+    nuevo_pedido = Pedido(
+        cliente_nombre=pedido.cliente_nombre,
+        cliente_email=pedido.cliente_email,
+        direccion_entrega=pedido.direccion_entrega,
+        telefono=pedido.telefono,
+        total=pedido.total,
+        estado=pedido.estado
+    )
+
+    db.add(nuevo_pedido)
+    db.commit()
+    db.refresh(nuevo_pedido)
+
+    for item in pedido.detalle:
+        producto = db.query(Producto).filter(
+            Producto.id == item.producto_id
+        ).first()
+
+        if not producto:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Producto con ID {item.producto_id} no encontrado"
+            )
+
+        nuevo_detalle = DetallePedido(
+            pedido_id=nuevo_pedido.id,
+            producto_id=item.producto_id,
+            cantidad=item.cantidad,
+            precio_unitario=item.precio_unitario,
+            subtotal=item.subtotal
+        )
+
+        db.add(nuevo_detalle)
+
+    db.commit()
+
+    return construir_respuesta_pedido(nuevo_pedido, db)
 
 
 @router.put("/{pedido_id}/estado", response_model=PedidoResponse)
-def actualizar_estado_pedido(pedido_id: int, estado_pedido: PedidoUpdateEstado):
-    estados_validos = ["Pendiente", "En preparación", "En camino", "Entregado", "Cancelado"]
+def actualizar_estado_pedido(
+    pedido_id: int,
+    estado_pedido: PedidoUpdateEstado,
+    db: Session = Depends(get_db)
+):
+    estados_validos = [
+        "Pendiente",
+        "En preparación",
+        "En camino",
+        "Entregado",
+        "Cancelado"
+    ]
 
     if estado_pedido.estado not in estados_validos:
         raise HTTPException(
@@ -77,21 +124,36 @@ def actualizar_estado_pedido(pedido_id: int, estado_pedido: PedidoUpdateEstado):
             detail=f"Estado no válido. Estados permitidos: {estados_validos}"
         )
 
-    for pedido in pedidos:
-        if pedido["id"] == pedido_id:
-            pedido["estado"] = estado_pedido.estado
-            return pedido
+    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
 
-    raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+    pedido.estado = estado_pedido.estado
+
+    db.commit()
+    db.refresh(pedido)
+
+    return construir_respuesta_pedido(pedido, db)
 
 
 @router.delete("/{pedido_id}")
-def eliminar_pedido(pedido_id: int):
-    for pedido in pedidos:
-        if pedido["id"] == pedido_id:
-            pedidos.remove(pedido)
-            return {
-                "message": "Pedido eliminado correctamente"
-            }
+def eliminar_pedido(pedido_id: int, db: Session = Depends(get_db)):
+    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
 
-    raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+    detalles = db.query(DetallePedido).filter(
+        DetallePedido.pedido_id == pedido_id
+    ).all()
+
+    for detalle in detalles:
+        db.delete(detalle)
+
+    db.delete(pedido)
+    db.commit()
+
+    return {
+        "message": "Pedido eliminado correctamente"
+    }

@@ -1,4 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+
+from database.database import get_db
+from models.models import Producto, Categoria
 from schemas.schemas import ProductoCreate, ProductoUpdate, ProductoResponse
 
 router = APIRouter(
@@ -6,95 +10,93 @@ router = APIRouter(
     tags=["Productos"]
 )
 
-productos = [
-    {
-        "id": 1,
-        "nombre": "Hamburguesa Clásica",
-        "descripcion": "Hamburguesa con carne, queso, lechuga, tomate y salsa especial.",
-        "precio": 6.50,
-        "categoria_id": 1,
-        "disponible": True
-    },
-    {
-        "id": 2,
-        "nombre": "Papas Fritas",
-        "descripcion": "Porción mediana de papas fritas.",
-        "precio": 2.75,
-        "categoria_id": 1,
-        "disponible": True
-    },
-    {
-        "id": 3,
-        "nombre": "Soda",
-        "descripcion": "Bebida fría en lata.",
-        "precio": 1.50,
-        "categoria_id": 2,
-        "disponible": True
-    }
-]
-
 
 @router.get("/", response_model=list[ProductoResponse])
-def listar_productos():
-    return productos
+def listar_productos(db: Session = Depends(get_db)):
+    return db.query(Producto).all()
 
 
 @router.get("/{producto_id}", response_model=ProductoResponse)
-def obtener_producto(producto_id: int):
-    for producto in productos:
-        if producto["id"] == producto_id:
-            return producto
+def obtener_producto(producto_id: int, db: Session = Depends(get_db)):
+    producto = db.query(Producto).filter(Producto.id == producto_id).first()
 
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    return producto
 
 
 @router.post("/", response_model=ProductoResponse, status_code=201)
-def crear_producto(producto: ProductoCreate):
-    nuevo_producto = {
-        "id": len(productos) + 1,
-        "nombre": producto.nombre,
-        "descripcion": producto.descripcion,
-        "precio": producto.precio,
-        "categoria_id": producto.categoria_id,
-        "disponible": producto.disponible
-    }
+def crear_producto(producto: ProductoCreate, db: Session = Depends(get_db)):
+    categoria = db.query(Categoria).filter(Categoria.id == producto.categoria_id).first()
 
-    productos.append(nuevo_producto)
+    if not categoria:
+        raise HTTPException(status_code=404, detail="Categoría no encontrada")
+
+    nuevo_producto = Producto(
+        nombre=producto.nombre,
+        descripcion=producto.descripcion,
+        precio=producto.precio,
+        categoria_id=producto.categoria_id,
+        disponible=producto.disponible
+    )
+
+    db.add(nuevo_producto)
+    db.commit()
+    db.refresh(nuevo_producto)
 
     return nuevo_producto
 
 
 @router.put("/{producto_id}", response_model=ProductoResponse)
-def actualizar_producto(producto_id: int, producto_actualizado: ProductoUpdate):
-    for producto in productos:
-        if producto["id"] == producto_id:
-            if producto_actualizado.nombre is not None:
-                producto["nombre"] = producto_actualizado.nombre
+def actualizar_producto(
+    producto_id: int,
+    producto_actualizado: ProductoUpdate,
+    db: Session = Depends(get_db)
+):
+    producto = db.query(Producto).filter(Producto.id == producto_id).first()
 
-            if producto_actualizado.descripcion is not None:
-                producto["descripcion"] = producto_actualizado.descripcion
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-            if producto_actualizado.precio is not None:
-                producto["precio"] = producto_actualizado.precio
+    if producto_actualizado.categoria_id is not None:
+        categoria = db.query(Categoria).filter(
+            Categoria.id == producto_actualizado.categoria_id
+        ).first()
 
-            if producto_actualizado.categoria_id is not None:
-                producto["categoria_id"] = producto_actualizado.categoria_id
+        if not categoria:
+            raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
-            if producto_actualizado.disponible is not None:
-                producto["disponible"] = producto_actualizado.disponible
+        producto.categoria_id = producto_actualizado.categoria_id
 
-            return producto
+    if producto_actualizado.nombre is not None:
+        producto.nombre = producto_actualizado.nombre
 
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if producto_actualizado.descripcion is not None:
+        producto.descripcion = producto_actualizado.descripcion
+
+    if producto_actualizado.precio is not None:
+        producto.precio = producto_actualizado.precio
+
+    if producto_actualizado.disponible is not None:
+        producto.disponible = producto_actualizado.disponible
+
+    db.commit()
+    db.refresh(producto)
+
+    return producto
 
 
 @router.delete("/{producto_id}")
-def eliminar_producto(producto_id: int):
-    for producto in productos:
-        if producto["id"] == producto_id:
-            productos.remove(producto)
-            return {
-                "message": "Producto eliminado correctamente"
-            }
+def eliminar_producto(producto_id: int, db: Session = Depends(get_db)):
+    producto = db.query(Producto).filter(Producto.id == producto_id).first()
 
-    raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    db.delete(producto)
+    db.commit()
+
+    return {
+        "message": "Producto eliminado correctamente"
+    }
