@@ -49,3 +49,36 @@ class ProductoUpdate(BaseModel):
 
 class ProductoResponse(ProductoBase):
     id: int
+
+# -------------------------
+# Pedidos
+# -------------------------
+
+class DetallePedidoBase(BaseModel):
+    producto_id: int
+    nombre_producto: str
+    cantidad: int
+    precio_unitario: float
+    subtotal: float
+
+
+class PedidoBase(BaseModel):
+    cliente_nombre: str
+    cliente_email: str
+    direccion_entrega: str
+    telefono: str | None = None
+    total: float
+    estado: str = "Pendiente"
+    detalle: list[DetallePedidoBase]
+
+
+class PedidoCreate(PedidoBase):
+    pass
+
+
+class PedidoUpdateEstado(BaseModel):
+    estado: str
+
+
+class PedidoResponse(PedidoBase):
+    id: int
