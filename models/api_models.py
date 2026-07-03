@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Text, Numeric, Boolean, ForeignKey, TIMESTAMP
 from sqlalchemy.sql import func
-from database.database import Base
+from database.api_database import Base
 
 
 class Categoria(Base):
