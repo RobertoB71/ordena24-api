@@ -8,7 +8,7 @@ class Rol(WebAppBase):
     __tablename__ = "roles"
 
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String(50), nullable=False, unique=True)
+    descripcion = Column(String(50), nullable=False, unique=True)
 
 
 class Usuario(WebAppBase):
