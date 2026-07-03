@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 
 
 # -------------------------
@@ -82,3 +83,42 @@ class PedidoUpdateEstado(BaseModel):
 
 class PedidoResponse(PedidoBase):
     id: int
+
+
+# -------------------------
+# Usuarios / Auth
+# -------------------------
+
+class UsuarioCreate(BaseModel):
+    nombre: str
+    email: EmailStr
+    password: str
+    rol_id: int = 1
+
+
+class UsuarioLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UsuarioUpdate(BaseModel):
+    nombre: str | None = None
+    email: EmailStr | None = None
+    rol_id: int | None = None
+
+
+class UsuarioResponse(BaseModel):
+    id: int
+    nombre: str
+    email: str
+    rol_id: int | None = None
+    activo: bool
+
+    class Config:
+        from_attributes = True
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str
+    usuario: UsuarioResponse
