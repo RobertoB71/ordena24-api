@@ -7,9 +7,8 @@ class Categoria(Base):
     __tablename__ = "categorias"
 
     id = Column(Integer, primary_key=True, index=True)
-    nombre = Column(String(100), nullable=False)
-    descripcion = Column(Text)
-
+    descripcion = Column(String(100), nullable=False, unique=True)
+    activo = Column(Boolean, default=True)
 
 class Producto(Base):
     __tablename__ = "productos"

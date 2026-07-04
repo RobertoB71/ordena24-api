@@ -7,23 +7,24 @@ from pydantic import BaseModel, EmailStr
 # -------------------------
 
 class CategoriaBase(BaseModel):
-    nombre: str
-    descripcion: str | None = None
+    descripcion: str
+    activo: bool = True
 
 
-class CategoriaCreate(CategoriaBase):
-    pass
+class CategoriaCreate(BaseModel):
+    descripcion: str
 
 
 class CategoriaUpdate(BaseModel):
-    nombre: str | None = None
     descripcion: str | None = None
+    activo: bool | None = None
 
 
 class CategoriaResponse(CategoriaBase):
     id: int
 
-
+    class Config:
+        from_attributes = True
 # -------------------------
 # Productos
 # -------------------------

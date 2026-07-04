@@ -16,6 +16,11 @@ def listar_categorias(db: Session = Depends(get_db)):
     return db.query(Categoria).all()
 
 
+@router.get("/activas", response_model=list[CategoriaResponse])
+def listar_categorias_activas(db: Session = Depends(get_db)):
+    return db.query(Categoria).filter(Categoria.activo == True).all()
+
+
 @router.get("/{categoria_id}", response_model=CategoriaResponse)
 def obtener_categoria(categoria_id: int, db: Session = Depends(get_db)):
     categoria = db.query(Categoria).filter(Categoria.id == categoria_id).first()
@@ -28,9 +33,19 @@ def obtener_categoria(categoria_id: int, db: Session = Depends(get_db)):
 
 @router.post("/", response_model=CategoriaResponse, status_code=201)
 def crear_categoria(categoria: CategoriaCreate, db: Session = Depends(get_db)):
+    categoria_existente = db.query(Categoria).filter(
+        Categoria.descripcion == categoria.descripcion
+    ).first()
+
+    if categoria_existente:
+        raise HTTPException(
+            status_code=400,
+            detail="La categoría ya existe"
+        )
+
     nueva_categoria = Categoria(
-        nombre=categoria.nombre,
-        descripcion=categoria.descripcion
+        descripcion=categoria.descripcion,
+        activo=True
     )
 
     db.add(nueva_categoria)
@@ -51,11 +66,11 @@ def actualizar_categoria(
     if not categoria:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
-    if categoria_actualizada.nombre is not None:
-        categoria.nombre = categoria_actualizada.nombre
-
     if categoria_actualizada.descripcion is not None:
         categoria.descripcion = categoria_actualizada.descripcion
+
+    if categoria_actualizada.activo is not None:
+        categoria.activo = categoria_actualizada.activo
 
     db.commit()
     db.refresh(categoria)
@@ -64,15 +79,17 @@ def actualizar_categoria(
 
 
 @router.delete("/{categoria_id}")
-def eliminar_categoria(categoria_id: int, db: Session = Depends(get_db)):
+def deshabilitar_categoria(categoria_id: int, db: Session = Depends(get_db)):
     categoria = db.query(Categoria).filter(Categoria.id == categoria_id).first()
 
     if not categoria:
         raise HTTPException(status_code=404, detail="Categoría no encontrada")
 
-    db.delete(categoria)
+    categoria.activo = False
+
     db.commit()
+    db.refresh(categoria)
 
     return {
-        "message": "Categoría eliminada correctamente"
+        "message": "Categoría deshabilitada correctamente"
     }
