@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from database.webapp_database import get_webapp_db
 from models.webapp_models import Usuario, Rol
-from schemas.schemas import UsuarioResponse, UsuarioUpdate
+from schemas.schemas import UsuarioResponse, UsuarioUpdate, RolResponse
 
 
 router = APIRouter(
@@ -19,6 +19,15 @@ def listar_usuarios(db: Session = Depends(get_webapp_db)):
     ).all()
 
     return usuarios
+
+
+@router.get("/roles", response_model=list[RolResponse])
+def listar_roles(db: Session = Depends(get_webapp_db)):
+    roles = db.query(Rol).order_by(
+        Rol.id.asc()
+    ).all()
+
+    return roles
 
 
 @router.get("/{usuario_id}", response_model=UsuarioResponse)

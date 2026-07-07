@@ -85,7 +85,6 @@ class PedidoUpdateEstado(BaseModel):
 class PedidoResponse(PedidoBase):
     id: int
 
-
 # -------------------------
 # Usuarios / Auth
 # -------------------------
@@ -114,6 +113,14 @@ class UsuarioResponse(BaseModel):
     email: str
     rol_id: int | None = None
     activo: bool
+
+    class Config:
+        from_attributes = True
+
+
+class RolResponse(BaseModel):
+    id: int
+    descripcion: str
 
     class Config:
         from_attributes = True
