@@ -3,8 +3,13 @@ from sqlalchemy.orm import Session
 
 from database.webapp_database import get_webapp_db
 from models.webapp_models import Usuario, Rol
-from schemas.schemas import UsuarioResponse, UsuarioUpdate, RolResponse
-
+from schemas.schemas import (
+    UsuarioCreate,
+    UsuarioResponse,
+    UsuarioUpdate,
+    RolResponse
+)
+from utils.security import encriptar_password
 
 router = APIRouter(
     prefix="/api/usuarios",
@@ -141,3 +146,42 @@ def habilitar_usuario(
     db.refresh(usuario)
 
     return usuario
+
+@router.post("/", response_model=UsuarioResponse, status_code=201)
+def crear_usuario(
+    data: UsuarioCreate,
+    db: Session = Depends(get_webapp_db)
+):
+    usuario_existente = db.query(Usuario).filter(
+        Usuario.email == data.email
+    ).first()
+
+    if usuario_existente:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El correo ya está registrado"
+        )
+
+    rol = db.query(Rol).filter(
+        Rol.id == data.rol_id
+    ).first()
+
+    if not rol:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El rol indicado no existe"
+        )
+
+    nuevo_usuario = Usuario(
+        nombre=data.nombre,
+        email=data.email,
+        password=encriptar_password(data.password),
+        rol_id=data.rol_id,
+        activo=True
+    )
+
+    db.add(nuevo_usuario)
+    db.commit()
+    db.refresh(nuevo_usuario)
+
+    return nuevo_usuario
