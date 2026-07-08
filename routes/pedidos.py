@@ -1,9 +1,16 @@
-from fastapi import APIRouter, HTTPException, Depends
+from decimal import Decimal, ROUND_HALF_UP
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from database.api_database import get_db
-from models.api_models import Pedido, DetallePedido, Producto
-from schemas.schemas import PedidoCreate, PedidoResponse, PedidoUpdateEstado
+from models.api_models import Categoria, DetallePedido, Pedido, Producto
+from schemas.schemas import (
+    PedidoCreate,
+    PedidoResponse,
+    PedidoUpdateEstado
+)
+
 
 router = APIRouter(
     prefix="/api/pedidos",
@@ -11,72 +18,66 @@ router = APIRouter(
 )
 
 
-def construir_respuesta_pedido(pedido: Pedido, db: Session):
-    detalle = db.query(DetallePedido).filter(
-        DetallePedido.pedido_id == pedido.id
-    ).all()
+ESTADOS_VALIDOS = [
+    "Pendiente",
+    "En preparación",
+    "Enviado",
+    "Entregado",
+    "Cancelado"
+]
 
-    detalle_respuesta = []
 
-    for item in detalle:
-        producto = db.query(Producto).filter(
-            Producto.id == item.producto_id
-        ).first()
-
-        detalle_respuesta.append({
-            "producto_id": item.producto_id,
-            "nombre_producto": producto.nombre if producto else "Producto no encontrado",
-            "cantidad": item.cantidad,
-            "precio_unitario": float(item.precio_unitario),
-            "subtotal": float(item.subtotal)
-        })
-
-    return {
-        "id": pedido.id,
-        "cliente_nombre": pedido.cliente_nombre,
-        "cliente_email": pedido.cliente_email,
-        "direccion_entrega": pedido.direccion_entrega,
-        "telefono": pedido.telefono,
-        "total": float(pedido.total),
-        "estado": pedido.estado,
-        "detalle": detalle_respuesta
-    }
+def redondear_monto(valor: Decimal) -> Decimal:
+    return valor.quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP
+    )
 
 
 @router.get("/", response_model=list[PedidoResponse])
 def listar_pedidos(db: Session = Depends(get_db)):
-    pedidos = db.query(Pedido).all()
+    pedidos = db.query(Pedido).order_by(
+        Pedido.id.desc()
+    ).all()
 
-    return [
-        construir_respuesta_pedido(pedido, db)
-        for pedido in pedidos
-    ]
+    return pedidos
 
 
 @router.get("/{pedido_id}", response_model=PedidoResponse)
-def obtener_pedido(pedido_id: int, db: Session = Depends(get_db)):
-    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
+def obtener_pedido(
+    pedido_id: int,
+    db: Session = Depends(get_db)
+):
+    pedido = db.query(Pedido).filter(
+        Pedido.id == pedido_id
+    ).first()
 
     if not pedido:
-        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pedido no encontrado"
+        )
 
-    return construir_respuesta_pedido(pedido, db)
+    return pedido
 
 
-@router.post("/", response_model=PedidoResponse, status_code=201)
-def crear_pedido(pedido: PedidoCreate, db: Session = Depends(get_db)):
-    nuevo_pedido = Pedido(
-        cliente_nombre=pedido.cliente_nombre,
-        cliente_email=pedido.cliente_email,
-        direccion_entrega=pedido.direccion_entrega,
-        telefono=pedido.telefono,
-        total=pedido.total,
-        estado=pedido.estado
-    )
+@router.post(
+    "/",
+    response_model=PedidoResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def crear_pedido(
+    pedido: PedidoCreate,
+    db: Session = Depends(get_db)
+):
+    if not pedido.detalle:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El pedido debe contener al menos un producto"
+        )
 
-    db.add(nuevo_pedido)
-    db.commit()
-    db.refresh(nuevo_pedido)
+    subtotal_pedido = Decimal("0.00")
+    detalles_preparados = []
 
     for item in pedido.detalle:
         producto = db.query(Producto).filter(
@@ -85,75 +86,126 @@ def crear_pedido(pedido: PedidoCreate, db: Session = Depends(get_db)):
 
         if not producto:
             raise HTTPException(
-                status_code=404,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Producto con ID {item.producto_id} no encontrado"
             )
 
-        nuevo_detalle = DetallePedido(
-            pedido_id=nuevo_pedido.id,
-            producto_id=item.producto_id,
-            cantidad=item.cantidad,
-            precio_unitario=item.precio_unitario,
-            subtotal=item.subtotal
+        if not producto.disponible:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El producto '{producto.nombre}' no está disponible"
+            )
+
+        categoria = db.query(Categoria).filter(
+            Categoria.id == producto.categoria_id
+        ).first()
+
+        if not categoria:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"La categoría del producto '{producto.nombre}' no existe"
+            )
+
+        if not categoria.activo:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"La categoría del producto '{producto.nombre}' está deshabilitada"
+            )
+
+        precio_unitario = Decimal(producto.precio)
+        subtotal_detalle = redondear_monto(
+            precio_unitario * item.cantidad
         )
 
-        db.add(nuevo_detalle)
+        subtotal_pedido += subtotal_detalle
 
-    db.commit()
+        detalles_preparados.append({
+            "producto_id": producto.id,
+            "nombre_producto": producto.nombre,
+            "cantidad": item.cantidad,
+            "precio_unitario": precio_unitario,
+            "subtotal": subtotal_detalle
+        })
 
-    return construir_respuesta_pedido(nuevo_pedido, db)
+    subtotal_pedido = redondear_monto(subtotal_pedido)
+
+    costo_envio = redondear_monto(
+        subtotal_pedido * Decimal("0.05")
+    )
+
+    total = redondear_monto(
+        subtotal_pedido + costo_envio
+    )
+
+    nuevo_pedido = Pedido(
+        usuario_id=pedido.usuario_id,
+        cliente_nombre=pedido.cliente_nombre,
+        cliente_email=pedido.cliente_email,
+        telefono=pedido.telefono,
+        direccion_entrega=pedido.direccion_entrega,
+        subtotal=subtotal_pedido,
+        costo_envio=costo_envio,
+        total=total,
+        estado="Pendiente"
+    )
+
+    try:
+        db.add(nuevo_pedido)
+        db.flush()
+
+        for item in detalles_preparados:
+            nuevo_detalle = DetallePedido(
+                pedido_id=nuevo_pedido.id,
+                producto_id=item["producto_id"],
+                nombre_producto=item["nombre_producto"],
+                cantidad=item["cantidad"],
+                precio_unitario=item["precio_unitario"],
+                subtotal=item["subtotal"]
+            )
+
+            db.add(nuevo_detalle)
+
+        db.commit()
+        db.refresh(nuevo_pedido)
+
+        return nuevo_pedido
+
+    except Exception:
+        db.rollback()
+        raise
 
 
-@router.put("/{pedido_id}/estado", response_model=PedidoResponse)
+@router.put(
+    "/{pedido_id}/estado",
+    response_model=PedidoResponse
+)
 def actualizar_estado_pedido(
     pedido_id: int,
-    estado_pedido: PedidoUpdateEstado,
+    data: PedidoUpdateEstado,
     db: Session = Depends(get_db)
 ):
-    estados_validos = [
-        "Pendiente",
-        "En preparación",
-        "En camino",
-        "Entregado",
-        "Cancelado"
-    ]
-
-    if estado_pedido.estado not in estados_validos:
+    if data.estado not in ESTADOS_VALIDOS:
         raise HTTPException(
-            status_code=400,
-            detail=f"Estado no válido. Estados permitidos: {estados_validos}"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Estado no válido. "
+                f"Estados permitidos: {ESTADOS_VALIDOS}"
+            )
         )
 
-    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
+    pedido = db.query(Pedido).filter(
+        Pedido.id == pedido_id
+    ).first()
 
     if not pedido:
-        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pedido no encontrado"
+        )
 
-    pedido.estado = estado_pedido.estado
+    pedido.estado = data.estado
 
     db.commit()
     db.refresh(pedido)
 
-    return construir_respuesta_pedido(pedido, db)
-
-
-@router.delete("/{pedido_id}")
-def eliminar_pedido(pedido_id: int, db: Session = Depends(get_db)):
-    pedido = db.query(Pedido).filter(Pedido.id == pedido_id).first()
-
-    if not pedido:
-        raise HTTPException(status_code=404, detail="Pedido no encontrado")
-
-    detalles = db.query(DetallePedido).filter(
-        DetallePedido.pedido_id == pedido_id
-    ).all()
-
-    for detalle in detalles:
-        db.delete(detalle)
-
-    db.delete(pedido)
-    db.commit()
-
-    return {
-        "message": "Pedido eliminado correctamente"
-    }
+    return pedido

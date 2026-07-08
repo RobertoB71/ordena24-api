@@ -1,6 +1,5 @@
-from pydantic import BaseModel
-from pydantic import BaseModel, EmailStr
-
+from pydantic import BaseModel, EmailStr, Field
+from datetime import datetime
 
 # -------------------------
 # Categorías
@@ -35,6 +34,7 @@ class ProductoBase(BaseModel):
     precio: float
     categoria_id: int
     disponible: bool = True
+    imagen_url: str | None = None
 
 
 class ProductoCreate(ProductoBase):
@@ -47,44 +47,66 @@ class ProductoUpdate(BaseModel):
     precio: float | None = None
     categoria_id: int | None = None
     disponible: bool | None = None
+    imagen_url: str | None = None
 
 
 class ProductoResponse(ProductoBase):
     id: int
 
+    class Config:
+        from_attributes = True
+
+
 # -------------------------
 # Pedidos
 # -------------------------
 
-class DetallePedidoBase(BaseModel):
+class DetallePedidoCreate(BaseModel):
+    producto_id: int
+    cantidad: int = Field(gt=0)
+
+
+class PedidoCreate(BaseModel):
+    usuario_id: int | None = None
+    cliente_nombre: str
+    cliente_email: EmailStr
+    telefono: str | None = None
+    direccion_entrega: str
+    detalle: list[DetallePedidoCreate]
+
+
+class DetallePedidoResponse(BaseModel):
+    id: int
     producto_id: int
     nombre_producto: str
     cantidad: int
     precio_unitario: float
     subtotal: float
 
-
-class PedidoBase(BaseModel):
-    cliente_nombre: str
-    cliente_email: str
-    direccion_entrega: str
-    telefono: str | None = None
-    total: float
-    estado: str = "Pendiente"
-    detalle: list[DetallePedidoBase]
-
-
-class PedidoCreate(PedidoBase):
-    pass
+    class Config:
+        from_attributes = True
 
 
 class PedidoUpdateEstado(BaseModel):
     estado: str
 
 
-class PedidoResponse(PedidoBase):
+class PedidoResponse(BaseModel):
     id: int
+    usuario_id: int | None = None
+    cliente_nombre: str
+    cliente_email: str
+    telefono: str | None = None
+    direccion_entrega: str
+    subtotal: float
+    costo_envio: float
+    total: float
+    estado: str
+    fecha_registro: datetime
+    detalle: list[DetallePedidoResponse] = Field(default_factory=list)
 
+    class Config:
+        from_attributes = True
 # -------------------------
 # Usuarios / Auth
 # -------------------------

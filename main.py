@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from fastapi.staticfiles import StaticFiles
 from routes.categorias import router as categorias_router
 from routes.productos import router as productos_router
 from routes.pedidos import router as pedidos_router
@@ -28,6 +28,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+app.mount(
+    "/uploads",
+    StaticFiles(directory="/app/uploads"),
+    name="uploads"
 )
 
 
