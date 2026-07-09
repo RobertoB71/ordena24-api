@@ -37,6 +37,7 @@ class ProductoBase(BaseModel):
     imagen_url: str | None = None
 
 
+
 class ProductoCreate(ProductoBase):
     pass
 

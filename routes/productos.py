@@ -1,13 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from sqlalchemy.orm import Session
 
 from database.api_database import get_db
 from models.api_models import Categoria, Producto
-from schemas.schemas import (
-    ProductoCreate,
-    ProductoResponse,
-    ProductoUpdate,
-)
+from schemas.schemas import ProductoResponse
 
 
 router = APIRouter(
@@ -16,13 +23,22 @@ router = APIRouter(
 )
 
 
+UPLOAD_DIR = Path("/app/uploads/productos")
+
+EXTENSIONES_PERMITIDAS = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/webp": ".webp",
+}
+
+TAMANO_MAXIMO = 5 * 1024 * 1024
+
+
 @router.get("/", response_model=list[ProductoResponse])
 def listar_productos(db: Session = Depends(get_db)):
-    productos = db.query(Producto).order_by(
+    return db.query(Producto).order_by(
         Producto.id.asc()
     ).all()
-
-    return productos
 
 
 @router.get("/disponibles", response_model=list[ProductoResponse])
@@ -70,12 +86,17 @@ def obtener_producto(
     response_model=ProductoResponse,
     status_code=status.HTTP_201_CREATED
 )
-def crear_producto(
-    producto: ProductoCreate,
+async def crear_producto(
+    nombre: str = Form(...),
+    descripcion: str | None = Form(None),
+    precio: float = Form(...),
+    categoria_id: int = Form(...),
+    disponible: bool = Form(True),
+    imagen: UploadFile | None = File(None),
     db: Session = Depends(get_db)
 ):
     categoria = db.query(Categoria).filter(
-        Categoria.id == producto.categoria_id
+        Categoria.id == categoria_id
     ).first()
 
     if not categoria:
@@ -90,32 +111,78 @@ def crear_producto(
             detail="No se puede crear un producto en una categoría deshabilitada"
         )
 
-    if producto.precio <= 0:
+    if precio <= 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El precio debe ser mayor que cero"
         )
 
+    imagen_url = None
+    ruta_archivo = None
+
+    if imagen:
+        extension = EXTENSIONES_PERMITIDAS.get(imagen.content_type)
+
+        if not extension:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Solo se permiten imágenes PNG, JPG o WEBP"
+            )
+
+        contenido = await imagen.read()
+
+        if len(contenido) > TAMANO_MAXIMO:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La imagen no puede superar los 5 MB"
+            )
+
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+        nombre_archivo = f"{uuid4().hex}{extension}"
+        ruta_archivo = UPLOAD_DIR / nombre_archivo
+        ruta_archivo.write_bytes(contenido)
+
+        imagen_url = f"/uploads/productos/{nombre_archivo}"
+
     nuevo_producto = Producto(
-        nombre=producto.nombre,
-        descripcion=producto.descripcion,
-        precio=producto.precio,
-        categoria_id=producto.categoria_id,
-        disponible=producto.disponible,
-        imagen_url=producto.imagen_url
+        nombre=nombre,
+        descripcion=descripcion,
+        precio=precio,
+        categoria_id=categoria_id,
+        disponible=disponible,
+        imagen_url=imagen_url
     )
 
-    db.add(nuevo_producto)
-    db.commit()
-    db.refresh(nuevo_producto)
+    try:
+        db.add(nuevo_producto)
+        db.commit()
+        db.refresh(nuevo_producto)
 
-    return nuevo_producto
+        return nuevo_producto
+
+    except Exception:
+        db.rollback()
+
+        if ruta_archivo and ruta_archivo.exists():
+            ruta_archivo.unlink()
+
+        raise
+
+    finally:
+        if imagen:
+            await imagen.close()
 
 
 @router.put("/{producto_id}", response_model=ProductoResponse)
-def actualizar_producto(
+async def actualizar_producto(
     producto_id: int,
-    producto_actualizado: ProductoUpdate,
+    nombre: str | None = Form(None),
+    descripcion: str | None = Form(None),
+    precio: float | None = Form(None),
+    categoria_id: int | None = Form(None),
+    disponible: bool | None = Form(None),
+    imagen: UploadFile | None = File(None),
     db: Session = Depends(get_db)
 ):
     producto = db.query(Producto).filter(
@@ -128,9 +195,9 @@ def actualizar_producto(
             detail="Producto no encontrado"
         )
 
-    if producto_actualizado.categoria_id is not None:
+    if categoria_id is not None:
         categoria = db.query(Categoria).filter(
-            Categoria.id == producto_actualizado.categoria_id
+            Categoria.id == categoria_id
         ).first()
 
         if not categoria:
@@ -145,33 +212,77 @@ def actualizar_producto(
                 detail="No se puede asignar una categoría deshabilitada"
             )
 
-        producto.categoria_id = producto_actualizado.categoria_id
+        producto.categoria_id = categoria_id
 
-    if producto_actualizado.nombre is not None:
-        producto.nombre = producto_actualizado.nombre
+    if nombre is not None:
+        producto.nombre = nombre
 
-    if producto_actualizado.descripcion is not None:
-        producto.descripcion = producto_actualizado.descripcion
+    if descripcion is not None:
+        producto.descripcion = descripcion
 
-    if producto_actualizado.precio is not None:
-        if producto_actualizado.precio <= 0:
+    if precio is not None:
+        if precio <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="El precio debe ser mayor que cero"
             )
 
-        producto.precio = producto_actualizado.precio
+        producto.precio = precio
 
-    if producto_actualizado.disponible is not None:
-        producto.disponible = producto_actualizado.disponible
+    if disponible is not None:
+        producto.disponible = disponible
 
-    if producto_actualizado.imagen_url is not None:
-        producto.imagen_url = producto_actualizado.imagen_url
+    ruta_nueva = None
+    ruta_anterior = None
 
-    db.commit()
-    db.refresh(producto)
+    if imagen:
+        extension = EXTENSIONES_PERMITIDAS.get(imagen.content_type)
 
-    return producto
+        if not extension:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Solo se permiten imágenes PNG, JPG o WEBP"
+            )
+
+        contenido = await imagen.read()
+
+        if len(contenido) > TAMANO_MAXIMO:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La imagen no puede superar los 5 MB"
+            )
+
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+        nombre_archivo = f"{uuid4().hex}{extension}"
+        ruta_nueva = UPLOAD_DIR / nombre_archivo
+        ruta_nueva.write_bytes(contenido)
+
+        if producto.imagen_url:
+            ruta_anterior = Path("/app") / producto.imagen_url.lstrip("/")
+
+        producto.imagen_url = f"/uploads/productos/{nombre_archivo}"
+
+    try:
+        db.commit()
+        db.refresh(producto)
+
+        if ruta_anterior and ruta_anterior.exists():
+            ruta_anterior.unlink()
+
+        return producto
+
+    except Exception:
+        db.rollback()
+
+        if ruta_nueva and ruta_nueva.exists():
+            ruta_nueva.unlink()
+
+        raise
+
+    finally:
+        if imagen:
+            await imagen.close()
 
 
 @router.put("/{producto_id}/estado", response_model=ProductoResponse)
