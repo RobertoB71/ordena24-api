@@ -42,6 +42,21 @@ def listar_pedidos(db: Session = Depends(get_db)):
 
     return pedidos
 
+@router.get(
+    "/usuario/{usuario_id}",
+    response_model=list[PedidoResponse]
+)
+def listar_pedidos_usuario(
+    usuario_id: int,
+    db: Session = Depends(get_db)
+):
+    pedidos = db.query(Pedido).filter(
+        Pedido.usuario_id == usuario_id
+    ).order_by(
+        Pedido.id.desc()
+    ).all()
+
+    return pedidos
 
 @router.get("/{pedido_id}", response_model=PedidoResponse)
 def obtener_pedido(
@@ -85,9 +100,9 @@ def crear_pedido(
         
         if item.producto_id in productos_recibidos:
             raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"El producto con ID {item.producto_id} está repetido"
-        )
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El producto con ID {item.producto_id} está repetido"
+            )
 
         productos_recibidos.add(item.producto_id)
         
@@ -216,8 +231,48 @@ def actualizar_estado_pedido(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Pedido no encontrado"
         )
+        
+    if pedido.estado == "Cancelado":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Un pedido cancelado no puede cambiar de estado"
+        )
 
     pedido.estado = data.estado
+
+    db.commit()
+    db.refresh(pedido)
+
+    return pedido
+
+
+@router.put(
+    "/{pedido_id}/cancelar/{usuario_id}",
+    response_model=PedidoResponse
+)
+def cancelar_pedido(
+    pedido_id: int,
+    usuario_id: int,
+    db: Session = Depends(get_db)
+):
+    pedido = db.query(Pedido).filter(
+        Pedido.id == pedido_id,
+        Pedido.usuario_id == usuario_id
+    ).first()
+
+    if not pedido:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pedido no encontrado para este usuario"
+        )
+
+    if pedido.estado not in ["Pendiente", "En preparación"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El pedido ya no puede cancelarse"
+        )
+
+    pedido.estado = "Cancelado"
 
     db.commit()
     db.refresh(pedido)
