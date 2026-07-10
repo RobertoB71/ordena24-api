@@ -78,11 +78,24 @@ def crear_pedido(
 
     subtotal_pedido = Decimal("0.00")
     detalles_preparados = []
+    
+    productos_recibidos = set()
 
     for item in pedido.detalle:
+        
+        if item.producto_id in productos_recibidos:
+            raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"El producto con ID {item.producto_id} está repetido"
+        )
+
+        productos_recibidos.add(item.producto_id)
+        
         producto = db.query(Producto).filter(
             Producto.id == item.producto_id
         ).first()
+        
+        
 
         if not producto:
             raise HTTPException(
@@ -111,6 +124,7 @@ def crear_pedido(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"La categoría del producto '{producto.nombre}' está deshabilitada"
             )
+            
 
         precio_unitario = Decimal(producto.precio)
         subtotal_detalle = redondear_monto(
